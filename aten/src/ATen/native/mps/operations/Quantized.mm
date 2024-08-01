@@ -735,66 +735,31 @@ Tensor _convert_weight_to_int4pack_mps(const Tensor& in, int64_t innerKTiles) {
   // shape {N / 8, K / (16 * innerKTiles), 32, innerKTiles / 2}
   auto weight_packed = at::empty({N / 8, K / (16 * innerKTiles), 32, innerKTiles / 2},
                                  at::TensorOptions().dtype(at::kInt).device(at::kMPS));
-  static const bool is_macOS_15_0_or_newer = is_macos_13_or_newer(MacOSVersion::MACOS_VER_15_0_PLUS);
-
-  if (!is_macOS_15_0_or_newer) {
-    MPSStream* mpsStream = getCurrentMPSStream();
-    std::array<uint32_t, 4> sizes = {static_cast<uint32_t>(N), static_cast<uint32_t>(Kdiv2 / 4), 0, 0};
-    dispatch_sync_with_rethrow(mpsStream->queue(), ^() {
-      @autoreleasepool {
+  MPSStream* mpsStream = getCurrentMPSStream();
+  std::array<uint32_t, 4> sizes = {static_cast<uint32_t>(N), static_cast<uint32_t>(Kdiv2 / 4), 0, 0};
+  dispatch_sync_with_rethrow(mpsStream->queue(), ^() {
+    @autoreleasepool {
 #if _CAPTURE_KERNEL
-        if (getMPSProfiler().isCaptureEnabled()) {
-          getMPSProfiler().startCapture(fmt::format("weight_to_int4pack_{}x{}", N, Kdiv2), mpsStream);
-        }
-#endif
-        id<MTLComputeCommandEncoder> computeEncoder = mpsStream->commandEncoder();
-        const std::string kernel = fmt::format("weight_to_int4pack");
-        id<MTLComputePipelineState> quantizedPSO = lib.getPipelineStateForFunc(kernel);
-        const auto maxThreadsPerGroup = [quantizedPSO maxTotalThreadsPerThreadgroup];
-        [computeEncoder setComputePipelineState:quantizedPSO];
-        mtl_setBuffer(computeEncoder, weight, 0);
-        mtl_setBuffer(computeEncoder, weight_packed, 1);
-        mtl_setBytes(computeEncoder, sizes, 2);
-        [computeEncoder dispatchThreads:MTLSizeMake(N, Kdiv2 / 4, 1) threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
-#if _CAPTURE_KERNEL
-        if (getMPSProfiler().isCapturing()) {
-          getMPSProfiler().stopCapture(mpsStream);
-        }
-#endif
+      if (getMPSProfiler().isCaptureEnabled()) {
+        getMPSProfiler().startCapture(fmt::format("weight_to_int4pack_{}x{}", N, Kdiv2), mpsStream);
       }
-    });
-  } else {
-    std::string key = __func__ + getTensorsStringKey(in);
-    auto cachedGraph = LookUpOrCreateCachedGraph<MPSUnaryCachedGraph>(key, [&](auto mpsGraph, auto newCachedGraph) {
-      newCachedGraph->inputTensor_ = mpsGraphRankedPlaceHolder(mpsGraph, in);
-      MPSGraphTensor* uTensor = newCachedGraph->inputTensor_;
-      auto uTensor00 = [mpsGraph reinterpretCastTensor:newCachedGraph->inputTensor_ toType:MPSDataTypeUInt32 name:nil];
-
-      // Reshape to [x,x,2] and slice to get every other element:
-      auto uTensor2 = [mpsGraph reshapeTensor:uTensor00 withShape:@[ @(in.size(0)), @(in.size(1) / 2), @2 ] name:nil];
-      // 2 slices:
-      auto uTensor0 = [mpsGraph sliceTensor:uTensor2 dimension:2 start:0 length:1 name:nil];
-      auto uTensor1 = [mpsGraph sliceTensor:uTensor2 dimension:2 start:1 length:1 name:nil];
-      auto uTensor0S = [mpsGraph squeezeTensor:uTensor0 axis:-1 name:nil];
-      auto uTensor1S = [mpsGraph squeezeTensor:uTensor1 axis:-1 name:nil];
-
-      // Left-shift the second operand by 4 bits. ie multiply by 16:
-      auto fourTU = [mpsGraph constantWithScalar:4.0 dataType:MPSDataTypeUInt32];
-      auto mask = [mpsGraph constantWithScalar:0x0F dataType:MPSDataTypeUInt32];
-      auto andU1 = [mpsGraph bitwiseANDWithPrimaryTensor:uTensor1S secondaryTensor:mask name:nil];
-      auto shiftU1 = [mpsGraph bitwiseLeftShiftWithPrimaryTensor:andU1 secondaryTensor:fourTU name:nil];
-      auto andU2 = [mpsGraph bitwiseANDWithPrimaryTensor:uTensor0S secondaryTensor:mask name:nil];
-      auto packedU = [mpsGraph bitwiseORWithPrimaryTensor:andU2 secondaryTensor:shiftU1 name:nil];
-      auto resultU8 = [mpsGraph castTensor:packedU toType:MPSDataTypeUInt8 name:nil];
-      auto resultI8 = [mpsGraph reinterpretCastTensor:resultU8 toType:MPSDataTypeInt8 name:nil];
-      newCachedGraph->outputTensor_ = resultI8;
-    });
-    auto APlaceholder = Placeholder(cachedGraph->inputTensor_, in);
-    auto outputPlaceholder =
-        Placeholder(cachedGraph->outputTensor_, weight_packed, @[ @(in.numel() / 2) ], true, MPSDataTypeInt8);
-    runMPSGraph(
-        getCurrentMPSStream(), cachedGraph->graph(), dictionaryFromPlaceholders(APlaceholder), outputPlaceholder);
-  }
+#endif
+      id<MTLComputeCommandEncoder> computeEncoder = mpsStream->commandEncoder();
+      const std::string kernel = fmt::format("weight_to_int4pack");
+      id<MTLComputePipelineState> quantizedPSO = lib.getPipelineStateForFunc(kernel);
+      const auto maxThreadsPerGroup = [quantizedPSO maxTotalThreadsPerThreadgroup];
+      [computeEncoder setComputePipelineState:quantizedPSO];
+      mtl_setBuffer(computeEncoder, weight, 0);
+      mtl_setBuffer(computeEncoder, weight_packed, 1);
+      mtl_setBytes(computeEncoder, sizes, 2);
+      [computeEncoder dispatchThreads:MTLSizeMake(N, Kdiv2 / 4, 1) threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+#if _CAPTURE_KERNEL
+      if (getMPSProfiler().isCapturing()) {
+        getMPSProfiler().stopCapture(mpsStream);
+      }
+#endif
+    }
+  });
   return weight_packed;
 }
 
