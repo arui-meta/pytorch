@@ -1930,7 +1930,8 @@ def forward(self, p_linear_weight, p_linear_bias, b_buffer, x):
             f".*{re.escape('return r.view(items[0], items[2])')}(.*\n)+"
             "Suggested fixes.*:\n"
             f".*{re.escape('torch._check(items[2] == (-1))')}.*\n"
-            f".*{re.escape('torch._check(items[2] != (-1))')}",
+            f".*{re.escape('torch._check(items[2] != (-1))')}(.*\n)+"
+            f".*{re.escape('(replacing `u2` with items[2])')}",
         ):
             export(N(), (t,), strict=strict)
 
@@ -1950,7 +1951,8 @@ def forward(self, p_linear_weight, p_linear_bias, b_buffer, x):
             f".*{re.escape('return r.view(items[0], items[2])')}(.*\n)+"
             "Suggested fixes.*:\n"
             f".*{re.escape('torch._check(items[2] >= 0)')}.*\n"
-            f".*{re.escape('torch._check(items[2] < 0)')}",
+            f".*{re.escape('torch._check(items[2] < 0)')}(.*\n)+"
+            f".*{re.escape('(replacing `u2` with items[2])')}",
         ):
             export(N(), (t,), strict=strict)
 
@@ -1971,8 +1973,9 @@ def forward(self, p_linear_weight, p_linear_bias, b_buffer, x):
             "User code(.*\n)+"
             f".*{re.escape('return r.view(items[0], items[2])')}(.*\n)+"
             "Suggested fixes.*:\n"
-            f".*{re.escape('torch._check(items[2] == r.shape[1])')}.*\n"
-            f".*{re.escape('torch._check(items[2] != r.shape[1])')}",
+            f".*{re.escape('torch._check(items[2] == items[1])')}.*\n"
+            f".*{re.escape('torch._check(items[2] != items[1])')}(.*\n)+"
+            f".*{re.escape('(replacing `u1` with items[1] or r.shape[1], `u2` with items[2])')}",
         ):
             export(N(), (t,), strict=strict)
 
